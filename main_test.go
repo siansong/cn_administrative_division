@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	// "github.com/go-pg/pg"            // postgresql orm
@@ -52,11 +53,6 @@ var testDataTangShanCounties = []Area{
 	Area{Code: "130283000000", Name: "迁安市"},
 }
 
-// code     |  name  |     href     | parent_code | level | path | full_name
-// --------------+--------+--------------+-------------+-------+------+-----------
-//  110100000000 | 市辖区 | 11/1101.html | 11          | 市    |      |
-// var testDataBeiJingCity = &Area{Code: "110100000000", Name: "市辖区", Href: "11/1101.html", ParentCode: "11", Level: LVCity}
-
 var testDataBeiJingCityCode = "110100000000"   // 北京市辖区
 var testDataHaiDianCountyCode = "110108000000" // 海淀Code
 var testDataHaiDianTowns = []Area{
@@ -91,6 +87,38 @@ var testDataHaiDianTowns = []Area{
 	Area{Code: "110108030000", Name: "上庄地区办事处"},
 }
 
+// 110108019000	西三旗街道办事处
+var testDataXiSanQiTownCode = "110108019000"
+var testDataXiSanQiTownVillages = []Area{
+	Area{Code: "110108019003", Name: "永泰园第一社区居委会"},
+	Area{Code: "110108019004", Name: "清缘里社区居委会"},
+	Area{Code: "110108019005", Name: "建材西里社区居委会"},
+	Area{Code: "110108019006", Name: "机械学院联合社区居委会"},
+	Area{Code: "110108019009", Name: "永泰西里社区居委会"},
+	Area{Code: "110108019010", Name: "宝盛里社区居委会"},
+	Area{Code: "110108019012", Name: "建材东里社区居委会"},
+	Area{Code: "110108019013", Name: "清缘东里社区居委会"},
+	Area{Code: "110108019014", Name: "悦秀园社区居委会"},
+	Area{Code: "110108019015", Name: "电科院社区居委会"},
+	Area{Code: "110108019016", Name: "沁春家园社区居委会"},
+	Area{Code: "110108019018", Name: "育新花园社区居委会"},
+	Area{Code: "110108019021", Name: "冶金研究院社区居委会"},
+	Area{Code: "110108019022", Name: "北新集团社区居委会"},
+	Area{Code: "110108019023", Name: "9511工厂联合社区居委会"},
+	Area{Code: "110108019024", Name: "永泰庄社区居委会"},
+	Area{Code: "110108019025", Name: "清润家园社区居委会"},
+	Area{Code: "110108019026", Name: "永泰园第二社区居委会"},
+	Area{Code: "110108019027", Name: "建材城联合社区居委会"},
+	Area{Code: "110108019028", Name: "小营联合社区居委会"},
+	Area{Code: "110108019029", Name: "怡清园社区居委会"},
+	Area{Code: "110108019030", Name: "枫丹丽舍社区居委会"},
+	Area{Code: "110108019032", Name: "知本时代社区居委会"},
+	Area{Code: "110108019033", Name: "清景园社区居委会"},
+	Area{Code: "110108019034", Name: "清缘西里社区居委会"},
+	Area{Code: "110108019035", Name: "富力桃园社区居委会"},
+	Area{Code: "110108019036", Name: "永泰东里社区居委会"},
+}
+
 func dropDb() {
 	db := connTryCreateTb()
 	defer db.Close()
@@ -116,7 +144,7 @@ func TestFetchProvinces(t *testing.T) {
 	// t.Skip("跳过抓取省份测试")
 	dropDb()
 
-	fetchProvinces()
+	fetchAllProvinces()
 
 	provinces := findByLevelAndParent(LVProvince, ignoreCode)
 
@@ -136,8 +164,8 @@ func TestFetchProvinces(t *testing.T) {
 
 func TestFetchCities(t *testing.T) {
 	dropDb()
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 
 	db := connTryCreateTb()
 	defer db.Close()
@@ -160,8 +188,8 @@ func TestFetchCities(t *testing.T) {
 func TestFetchCountyOfCity(t *testing.T) {
 	dropDb()
 
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 
 	db := connTryCreateTb()
 	defer db.Close()
@@ -189,8 +217,8 @@ func TestFetchCountyOfCity(t *testing.T) {
 func TestFetchAllCounties(t *testing.T) {
 	dropDb()
 
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 
 	fetchAllCounties()
 
@@ -204,11 +232,11 @@ func TestFetchAllCounties(t *testing.T) {
 	}
 }
 
-func TestFetchTownsOfCounty(t *testing.T) {
+func TestFetchTownsOfCountyFetchVillagesOfTown(t *testing.T) {
 	dropDb()
 
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 
 	db := connTryCreateTb()
 	defer db.Close()
@@ -230,12 +258,25 @@ func TestFetchTownsOfCounty(t *testing.T) {
 		t.Errorf("嗯，抓取到的海淀的towns似乎不对, Exp: [%d] Got: [%d] \n : %v", len(testDataHaiDianTowns), len(townsOfHaidianCounty), townsOfHaidianCounty)
 	}
 
+	xiSanQiTown := &Area{Code: testDataXiSanQiTownCode}
+	err = db.Select(xiSanQiTown)
+	panicIf(err)
+	fetchVillagesOfTown(*xiSanQiTown, db)
+
+	villagesOfXiSanQiTown := findByLevelAndParent(LVVillage, xiSanQiTown.Code)
+
+	expectedLen, actualLen := len(testDataXiSanQiTownVillages), len(villagesOfXiSanQiTown)
+	if expectedLen != actualLen {
+		t.Errorf("似乎没抓到对的数据，Exp: [%d], Act: [%d]", expectedLen, actualLen)
+	}
+
 }
 
+// TestFetchAllTowns FBI warning 这个测试用例啊，最好别跑，有点费时间
 func TestFetchAllTowns(t *testing.T) {
 	dropDb()
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 	fetchAllCounties()
 	fetchAllTowns()
 
@@ -249,4 +290,6 @@ func TestFetchAllTowns(t *testing.T) {
 	if count < 40000 {
 		t.Errorf("全国街道/乡镇差不多应该超过40000的吧？ Exp: [40000], Got: [%d]", count)
 	}
+
+	fmt.Println("db pool stats:", db.PoolStats())
 }

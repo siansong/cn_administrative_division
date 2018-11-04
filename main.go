@@ -7,9 +7,11 @@ import (
 
 	// "log"
 	"net/http" //http utils
+	// "runtime"
 	"strconv"  // string convert pkg
 	"strings"
 	"time"
+	
 
 	"github.com/PuerkitoBio/goquery" // html文档解析
 	"github.com/djimenez/iconv-go"   // 字符编码间转换
@@ -35,7 +37,7 @@ const (
 	// LVTown ...
 	LVTown Level = "街道/乡镇"
 	// LVVillage ...
-	LVVillage Level = "村"
+	LVVillage Level = "社区/村"
 )
 
 // Area 行政区划
@@ -45,8 +47,8 @@ type Area struct {
 	Href       string // html链接
 	ParentCode string // 父级code
 	Level      Level  // 级别
-	Path       string // eg:10/1001/100103 差不多自己体会吧。。。
-	FullName   string // 全路径名字
+	// Path       string // eg:10/1001/100103 差不多自己体会吧。。。
+	// FullName   string // 全路径名字
 	//todo path,full name
 }
 
@@ -159,6 +161,7 @@ func connTryCreateTb() *pg.DB {
 		User:     "pg",
 		Password: "123",
 		Database: "cad",
+		PoolSize: 25, //runtime.NumCPU(): 8 (my pc)
 	})
 
 	// db.DropTable(&Area{}, &orm.DropTableOptions{
@@ -189,17 +192,21 @@ func pageSpider(href string, selector string, parser areaParser) (areas []Area) 
 	url, _ := url.Parse(href)
 
 	var resp *http.Response
+	var httpErr error
 
-	for i := 0; i < 3; i++ {
-		tmpResp, err := http.DefaultClient.Do(&http.Request{
+	for i := 0; i < 5; i++ {
+		tmpResp, e := http.DefaultClient.Do(&http.Request{
 			Method: "GET",
 			URL:    url,
 			Header: map[string][]string{
-				// "Cookie": []string{"_trs_uv=jnsvah95_6_dvwa; AD_RS_COOKIE=20081945"},
+				// "Cookie": []string{"AD_RS_COOKIE=20081945"},
 				"Host": []string{"www.stats.gov.cn"},
 			},
 		})
-		panicIf(err)
+		httpErr = e
+		if e != nil {
+			continue
+		}
 
 		resp = tmpResp
 
@@ -211,9 +218,10 @@ func pageSpider(href string, selector string, parser areaParser) (areas []Area) 
 		}
 
 	}
+	panicIf(httpErr)
 	ifThenPanic(resp.StatusCode != 200, "【ERR】repCode != 200, Got:"+strconv.Itoa(resp.StatusCode)+", url: "+href)
 	// fmt.Println("http time:", time.Now().Sub(startT))
-	fmt.Println("[Get done]", time.Now().Sub(startT), href)
+	fmt.Println("[http done]", time.Now().Sub(startT), href)
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	panicIfWithMsg(err, href)
 	doc.Find(selector).Each(func(i int, selection *goquery.Selection) {
@@ -225,8 +233,21 @@ func pageSpider(href string, selector string, parser areaParser) (areas []Area) 
 	return
 }
 
-// fetchProvinces ...
-func fetchProvinces() (areas []Area) {
+func findByLevelAndParent(lv Level, parentCode string) []Area {
+	var areas []Area
+	db := connTryCreateTb()
+	defer db.Close()
+	q := db.Model(&areas).
+		Where("level = ?", lv)
+	if parentCode != ignoreCode {
+		q.Where("parent_code = ? ", parentCode)
+	}
+	q.Select()
+	return areas
+}
+
+// fetchAllProvinces ...
+func fetchAllProvinces() (areas []Area) {
 	db := connTryCreateTb()
 	defer db.Close()
 
@@ -250,7 +271,7 @@ func fetchProvinces() (areas []Area) {
 	return
 }
 
-func fetchCities() {
+func fetchAllCities() {
 	db := connTryCreateTb()
 	defer db.Close()
 
@@ -265,7 +286,7 @@ func fetchCities() {
 	for _, p := range provinces {
 		wg.Add(1)
 		go func(p Area) {
-			fetchCity(p, db, nowDbCities)
+			fetchCitiesOfProvince(p, db, nowDbCities)
 			wg.Done()
 		}(p)
 	}
@@ -273,9 +294,9 @@ func fetchCities() {
 	fmt.Println("[Fetch cities done]", time.Now().Sub(startT))
 }
 
-func fetchCity(p Area, db *pg.DB, nowDbCities []Area) {
-	fmt.Println("[Fetch city]", p)
-	spiderOutput := pageSpider(BaseURL+p.Href, "table.citytable tr.citytr", cityCountyTownParser)
+func fetchCitiesOfProvince(province Area, db *pg.DB, nowDbCities []Area) {
+	fmt.Println("[Fetch city]", province)
+	spiderOutput := pageSpider(BaseURL+province.Href, "table.citytable tr.citytr", cityCountyTownParser)
 
 	var datas []Area
 	for _, a := range spiderOutput {
@@ -283,7 +304,7 @@ func fetchCity(p Area, db *pg.DB, nowDbCities []Area) {
 			continue
 		}
 		a.Level = LVCity
-		a.ParentCode = p.Code
+		a.ParentCode = province.Code
 		datas = append(datas, a)
 	}
 
@@ -291,19 +312,6 @@ func fetchCity(p Area, db *pg.DB, nowDbCities []Area) {
 		err := db.Insert(&datas)
 		panicIf(err)
 	}
-}
-
-func findByLevelAndParent(lv Level, parentCode string) []Area {
-	var areas []Area
-	db := connTryCreateTb()
-	defer db.Close()
-	q := db.Model(&areas).
-		Where("level = ?", lv)
-	if parentCode != ignoreCode {
-		q.Where("parent_code = ? ", parentCode)
-	}
-	q.Select()
-	return areas
 }
 
 func fetchAllCounties() {
@@ -402,6 +410,97 @@ func fetchTownsOfCounty(county Area, db *pg.DB) {
 	fmt.Println("[Fetch towns of county] done,", time.Now().Sub(startT), county)
 }
 
+func fetchVillagesOfTown(town Area, db *pg.DB) {
+	if isStringBlank(town.Href) {
+		fmt.Println("!!!town href is blank, skiped", town)
+		return
+	}
+
+	startT := time.Now()
+	// nowDbVillagesOfTown := findByLevelAndParent(LVVillage, town.Code)
+
+	spiderOutput := pageSpider(BaseURL+town.Href, "table.villagetable tr.villagetr", villageParser)
+
+	var newVillages []Area
+	for _, a := range spiderOutput {
+		// if areaExistsInArray(&a, &nowDbVillagesOfTown) {
+		// 	continue
+		// }
+		a.Level = LVVillage
+		a.ParentCode = town.Code
+		newVillages = append(newVillages, a)
+	}
+
+	// fmt.Println("counties:", city, newTowns)
+	if len(newVillages) > 0 {
+		err := db.Insert(&newVillages)
+		if err != nil {
+			var codes []string
+			for _, v := range newVillages {
+				codes = append(codes, v.Code)
+			}
+			fmt.Println("codes:", codes)
+			panic(err)
+		}
+	}
+	fmt.Println("[Fetch villages of town] done,", time.Now().Sub(startT), town)
+}
+
+func fetchAllVillages() {
+	// 怎么搞呢？？
+	// 这样吧，反正goroutines也NB，不如就老办法，一个乡镇开一个，先试试，初步估算下差不多会有4w+个页面吧，估计行数60w左右。。。
+	// 数据规模：province:31, city:312, county:3000+, town:4w+, city/province: 10, county/province:100, town/city:120
+	// counties(k) >> towns(m) >> villages  : k
+	// [dep]city > county > town > village
+	// [dep]100*400
+	// counties > group by city 
+
+	startT := time.Now()
+	fmt.Println("[Fetch all villages start]")
+	
+	db := connTryCreateTb()
+	defer db.Close()
+
+	counties := findByLevelAndParent(LVCounty, ignoreCode) // 约3000+rows
+	cityCountyMap := make(map[string][]Area) // key:cityCode, val: counties array
+	if len(counties) == 0 {
+		panic("没有County数据，先抓取County数据")
+	}
+	for _, county := range counties {
+		cityCountyMap[county.ParentCode] = append(cityCountyMap[county.ParentCode], county)
+	}
+
+	var wg sync.WaitGroup
+	for cityCode, countiesOfCity := range cityCountyMap {
+		fmt.Println("[Fetch villages of city] ", cityCode)
+
+		var countieIds []string
+		for _, county := range countiesOfCity {
+			countieIds = append(countieIds, county.Code)
+		}
+
+		var townsOfCity []Area
+		// Where("id in (?)", pg.In(ids)).
+		err := db.Model(&townsOfCity).
+			Where("parent_code in (?)", pg.In(countieIds)).
+			Select()
+		panicIf(err)
+
+		for _, town := range townsOfCity {
+			wg.Add(1)
+			go func(t Area) {
+				fetchVillagesOfTown(t, db)
+				// fmt.Println("Action mock:fetchVillagesOfTown", t)
+				wg.Done()
+			}(town)
+		}
+		wg.Wait()
+	}
+
+	fmt.Println("[Fetch all villages done]", time.Now().Sub(startT))
+
+}
+
 func demoEncoding() {
 	utf8Str := "中文"
 
@@ -412,32 +511,10 @@ func demoEncoding() {
 }
 
 func main() {
-
-	// fetchProvinces()
-	// fetchCities()
-	// fetchAllCounties()
-
-	// href := "233/123.html"
-	// fullHref := BaseURL + href
-	// // href[0:strings.LastIndex(href, ".")]
-
-	// fmt.Println("fullHref:", fullHref)
-	// fmt.Println("lastIndexOf", strings.LastIndex(fullHref, BaseURL))
-
-	// start := strings.LastIndex(fullHref, BaseURL) + len(BaseURL)
-	// relativeHref := fullHref[start:]
-	// fmt.Println(relativeHref)
-
-	// fmt.Println(strings.Index("/233/222", "/"))
-	// fmt.Println(strings.Index("233/222", "/"))
-
-	// url := "http://www.stats.gov.cn/tjsj/tjbz/tjyqhdmhcxhfdm/2017/11.html"
-	// fmt.Println(url[0: strings.LastIndex(url, "/")])
-
-
-	// dropDb()
-	fetchProvinces()
-	fetchCities()
+	fetchAllProvinces()
+	fetchAllCities()
 	fetchAllCounties()
 	fetchAllTowns()
+
+	// fetchAllVillages()
 }

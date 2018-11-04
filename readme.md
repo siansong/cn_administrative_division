@@ -4,20 +4,37 @@
 
 装postgresql
 
-在main.go中搜Password,改成自己的数据库账号密码
+clone repo
+
+```bash
+go get -u "github.com/PuerkitoBio/goquery"
+go get -u "github.com/djimenez/iconv-go"
+go get -u "github.com/go-pg/pg"
+go get -u "github.com/go-pg/pg/orm"
+```
+
+在main.go中搜Password,改成自己的数据库账号密码，表会自动建的
 
 `go run main.go`
 
-QA
----
+这样可以抓到街道/乡镇一级，如果要抓社区/村级别，那稍微看下代码吧，数据量有点大所以默认就不抓了
 
-Q:Why this project?<br>
-A:之前找到一个，nodejs写的(https://github.com/modood/Administrative-divisions-of-China)，不过有点不满意，原本想用ts改进的，想想干脆用golang造个轮子
 
-Q:https://github.com/modood/Administrative-divisions-of-China 有什么不满<br>
-A:主要是速度有点慢，另外，觉得数据结构也可以改进下
+## Performance
 
-Q:
+基于我配置：
+```bash
+MacBook Pro 2017
+2.8 GHz Intel Core i7
+$sysctl -a | grep ".cpu."
+hw.ncpu: 8
+hw.physicalcpu: 4
+hw.physicalcpu_max: 4
+hw.logicalcpu: 8
+
+16 GB 2133 MHz LPDDR3
+```
+到乡镇级别,约`47107`rows,大概60s左右(看网络状况吧，我快的时候跑到50s+)
 
 
 TODO
@@ -28,12 +45,11 @@ TODO
 3. 增加测试
 4. self parentCode ref FK
 5. db复用，不用每次都Close()
-6. 增加retry机制，某些页面偶尔的会！=200
+6. <del>[done]增加retry机制，某些页面偶尔的会！=200</del>
 7. 寻求容错机制，即便众多过程中有失败，也能保证过最终数据的完整性
 8. connection reset by peer 😂
 
 
-其他
----
+## License
 
-china_administrative_division >> cad
+This repo is released under the [WTFPL](http://www.wtfpl.net/) – Do What the Fuck You Want to Public License.
